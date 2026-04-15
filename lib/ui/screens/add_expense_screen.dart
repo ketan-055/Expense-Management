@@ -8,7 +8,9 @@ import '../../data/models/expense.dart';
 import '../../data/models/payment_method.dart';
 import '../../data/models/place.dart';
 import '../../utils/formatters.dart';
+import '../widgets/addable_entity_dropdown.dart';
 import '../widgets/name_input_dialog.dart';
+import '../widgets/payment_method_dropdown_form_field.dart';
 
 class AddExpenseScreen extends StatefulWidget {
   const AddExpenseScreen({super.key});
@@ -30,6 +32,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   List<Place> _places = [];
   int? _categoryId;
   int? _placeId;
+  int _categoryMenuKey = 0;
+  int _placeMenuKey = 0;
   DateTime _expenseAt = DateTime.now();
 
   @override
@@ -133,6 +137,24 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     }
   }
 
+  Future<void> _afterDeleteCategory(int id) async {
+    await _loadDropdowns();
+    if (!mounted) return;
+    setState(() {
+      if (_categoryId == id) _categoryId = null;
+      _categoryMenuKey++;
+    });
+  }
+
+  Future<void> _afterDeletePlace(int id) async {
+    await _loadDropdowns();
+    if (!mounted) return;
+    setState(() {
+      if (_placeId == id) _placeId = null;
+      _placeMenuKey++;
+    });
+  }
+
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_categoryId == null) {
@@ -220,82 +242,60 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               maxLines: 2,
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<PaymentMethod>(
-              value: _payment, // ignore: deprecated_member_use
-              decoration: const InputDecoration(
-                labelText: 'Payment method',
-                border: OutlineInputBorder(),
-              ),
-              items: PaymentMethod.values
-                  .map(
-                    (p) => DropdownMenuItem(
-                      value: p,
-                      child: Text(p.label),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) {
+            PaymentMethodDropdownFormField(
+              selected: _payment,
+              onSelected: (v) {
                 if (v != null) setState(() => _payment = v);
               },
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<int>(
-              value: _categoryId, // ignore: deprecated_member_use
-              hint: const Text('Select category'),
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Category',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                ..._categories.map(
-                  (c) => DropdownMenuItem(
-                    value: c.id,
-                    child: Text(c.name),
-                  ),
-                ),
-                const DropdownMenuItem<int>(
-                  value: -1,
-                  child: Text('+ Add category'),
-                ),
+            AddableEntityDropdownFormField(
+              fieldKey: ValueKey(_categoryMenuKey),
+              label: const Text('Category'),
+              hintText: 'Select category',
+              entityKindLabel: 'Category',
+              selectedId: _categoryId,
+              rows: [
+                for (final c in _categories) (id: c.id, name: c.name),
               ],
-              onChanged: (v) async {
+              addLabel: '+ Add category',
+              onSelected: (v) async {
                 if (v == null) return;
                 if (v == -1) {
                   await _addCategory();
+                  if (mounted) setState(() => _categoryMenuKey++);
                   return;
                 }
                 setState(() => _categoryId = v);
               },
+              tryDelete: _db.deleteCategoryIfUnused,
+              onDeleted: (id) {
+                unawaited(_afterDeleteCategory(id));
+              },
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<int>(
-              value: _placeId, // ignore: deprecated_member_use
-              hint: const Text('Select place'),
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Place',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                ..._places.map(
-                  (p) => DropdownMenuItem(
-                    value: p.id,
-                    child: Text(p.name),
-                  ),
-                ),
-                const DropdownMenuItem<int>(
-                  value: -1,
-                  child: Text('+ Add place'),
-                ),
+            AddableEntityDropdownFormField(
+              fieldKey: ValueKey(_placeMenuKey),
+              label: const Text('Place'),
+              hintText: 'Select place',
+              entityKindLabel: 'Place',
+              selectedId: _placeId,
+              rows: [
+                for (final p in _places) (id: p.id, name: p.name),
               ],
-              onChanged: (v) async {
+              addLabel: '+ Add place',
+              onSelected: (v) async {
                 if (v == null) return;
                 if (v == -1) {
                   await _addPlace();
+                  if (mounted) setState(() => _placeMenuKey++);
                   return;
                 }
                 setState(() => _placeId = v);
+              },
+              tryDelete: _db.deletePlaceIfUnused,
+              onDeleted: (id) {
+                unawaited(_afterDeletePlace(id));
               },
             ),
             const SizedBox(height: 8),

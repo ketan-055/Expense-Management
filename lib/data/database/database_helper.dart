@@ -185,6 +185,22 @@ CREATE TABLE IF NOT EXISTS places (
     return rows.map(Category.fromMap).toList();
   }
 
+  /// Deletes a category if no expense references it. Returns `null` on success, or an error message.
+  Future<String?> deleteCategoryIfUnused(int id) async {
+    final db = await database;
+    final countRows = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM expenses WHERE category_id = ?',
+      [id],
+    );
+    final n = countRows.first['c'];
+    final count = n is int ? n : (n is num ? n.toInt() : 0);
+    if (count > 0) {
+      return 'This category is used by expenses. Edit or delete those first.';
+    }
+    await db.delete('categories', where: 'id = ?', whereArgs: [id]);
+    return null;
+  }
+
   // --- Places ---
 
   Future<int> insertPlace(String name) async {
@@ -207,6 +223,27 @@ CREATE TABLE IF NOT EXISTS places (
       orderBy: 'name COLLATE NOCASE ASC',
     );
     return rows.map(Place.fromMap).toList();
+  }
+
+  /// Deletes a place if no expense references it and at least one place remains.
+  /// Returns `null` on success, or an error message.
+  Future<String?> deletePlaceIfUnused(int id) async {
+    final db = await database;
+    final all = await getAllPlaces();
+    if (all.length <= 1) {
+      return 'Cannot delete the last place.';
+    }
+    final countRows = await db.rawQuery(
+      'SELECT COUNT(*) AS c FROM expenses WHERE place_id = ?',
+      [id],
+    );
+    final n = countRows.first['c'];
+    final count = n is int ? n : (n is num ? n.toInt() : 0);
+    if (count > 0) {
+      return 'This place is used by expenses. Edit or delete those first.';
+    }
+    await db.delete('places', where: 'id = ?', whereArgs: [id]);
+    return null;
   }
 
   // --- Budget ---
@@ -310,15 +347,12 @@ WHERE expense_at >= ? AND expense_at < ?
     );
   }
 
-  /// Filtered list within [scopeYear]/[scopeMonth]. [limit] null = no limit. [limit] 0 returns empty.
-  Future<List<ExpenseItem>> queryExpenses(ExpenseQuery q) async {
-    if (q.limit != null && q.limit! <= 0) {
-      return [];
-    }
-    final db = await database;
-    final where = <String>['1 = 1'];
-    final args = <Object?>[];
-
+  /// Same date/category/place/payment/amount filters as [queryExpenses]; [ExpenseQuery.limit] is ignored.
+  void _appendExpenseQueryWhere(
+    ExpenseQuery q,
+    List<String> where,
+    List<Object?> args,
+  ) {
     final lastDayInMonth = DateTime(q.scopeYear, q.scopeMonth + 1, 0).day;
     if (q.filterDay != null) {
       final day = q.filterDay!.clamp(1, lastDayInMonth);
@@ -353,6 +387,36 @@ WHERE expense_at >= ? AND expense_at < ?
       where.add('e.amount_rupees >= ? AND e.amount_rupees <= ?');
       args.addAll([q.amountMin!, q.amountMax!]);
     }
+  }
+
+  /// Sum of `amount_rupees` for rows matching [q] (ignores [ExpenseQuery.limit]).
+  Future<int> sumExpenseRupeesForQuery(ExpenseQuery q) async {
+    final db = await database;
+    final where = <String>['1 = 1'];
+    final args = <Object?>[];
+    _appendExpenseQueryWhere(q, where, args);
+    final result = await db.rawQuery(
+      '''
+SELECT IFNULL(SUM(e.amount_rupees), 0) AS s FROM expenses e
+WHERE ${where.join(' AND ')}
+''',
+      args,
+    );
+    final raw = result.first['s'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return 0;
+  }
+
+  /// Filtered list within [scopeYear]/[scopeMonth]. [limit] null = no limit. [limit] 0 returns empty.
+  Future<List<ExpenseItem>> queryExpenses(ExpenseQuery q) async {
+    if (q.limit != null && q.limit! <= 0) {
+      return [];
+    }
+    final db = await database;
+    final where = <String>['1 = 1'];
+    final args = <Object?>[];
+    _appendExpenseQueryWhere(q, where, args);
 
     var sql = '''
 SELECT e.id AS id,
