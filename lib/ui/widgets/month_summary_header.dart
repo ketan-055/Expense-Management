@@ -6,23 +6,34 @@ import '../../utils/formatters.dart';
 class MonthSummaryHeader extends StatelessWidget {
   const MonthSummaryHeader({
     super.key,
-    required this.year,
-    required this.monthIndex,
+    required this.selectedMonth,
+    required this.monthChoices,
     required this.budgetRupees,
     required this.spentRupees,
     required this.onSetBudget,
+    required this.onMonthChanged,
   });
 
-  final int year;
-  final int monthIndex;
+  /// First day of the visible month (year/month matter).
+  final DateTime selectedMonth;
+
+  /// Typically five consecutive months ending at the current month.
+  final List<DateTime> monthChoices;
+
   final int budgetRupees;
   final int spentRupees;
   final VoidCallback onSetBudget;
+  final ValueChanged<DateTime> onMonthChanged;
 
   int get _remaining => budgetRupees - spentRupees;
 
+  bool _sameMonth(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month;
+
   @override
   Widget build(BuildContext context) {
+    final year = selectedMonth.year;
+    final monthIndex = selectedMonth.month;
     final monthLabel = monthShortName(monthIndex);
     final remainingColor = _remaining >= 0
         ? const Color(0xFF4ADE80)
@@ -41,15 +52,54 @@ class MonthSummaryHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '$monthLabel $year',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white70,
-                        fontWeight: FontWeight.w600,
-                      ),
+                PopupMenuButton<DateTime>(
+                  tooltip: 'Select month',
+                  offset: const Offset(0, 36),
+                  initialValue: monthChoices.isEmpty
+                      ? null
+                      : monthChoices.firstWhere(
+                          (m) => _sameMonth(m, selectedMonth),
+                          orElse: () => monthChoices.first,
+                        ),
+                  onSelected: (d) {
+                    onMonthChanged(DateTime(d.year, d.month, 1));
+                  },
+                  itemBuilder: (context) => monthChoices
+                      .map(
+                        (d) => PopupMenuItem<DateTime>(
+                          value: d,
+                          child: Text(
+                            '${monthShortName(d.month)} ${d.year}',
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 2, right: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '$monthLabel $year',
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    color: Colors.white70,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          color: Colors.white.withValues(alpha: 0.7),
+                          size: 26,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
+                const Spacer(),
                 TextButton.icon(
                   onPressed: onSetBudget,
                   icon: const Icon(Icons.edit_outlined, size: 18),

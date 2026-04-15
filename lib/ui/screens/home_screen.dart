@@ -2,18 +2,18 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/month_names.dart';
 import '../../data/database/database_helper.dart';
 import '../../data/models/budget_entry.dart';
 import '../../data/models/category.dart';
 import '../../data/models/expense.dart';
 import '../../data/models/expense_query.dart';
+import '../../data/models/payment_method.dart';
 import '../../data/models/place.dart';
 import '../widgets/expense_card.dart';
 import '../widgets/month_summary_header.dart';
 import 'edit_expense_screen.dart';
 
-enum _FilterMode { recent, date, category, place, amount }
+enum _FilterMode { recent, date, category, place, amount, payment }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -33,12 +33,15 @@ class HomeScreenState extends State<HomeScreen> {
   _FilterMode _filterMode = _FilterMode.recent;
   bool _expandedList = false;
 
-  int _filterYear = DateTime.now().year;
-  int _filterMonth = DateTime.now().month;
+  /// First day of the month shown in the header (budget + list scope).
+  late DateTime _selectedMonthFirst;
+
+  /// Day within [_selectedMonthFirst] when using Date filter (1–31).
   int _filterDay = DateTime.now().day;
 
   int? _filterCategoryId;
   int? _filterPlaceId;
+  PaymentMethod? _filterPaymentMethod;
 
   final TextEditingController _minAmountController = TextEditingController();
   final TextEditingController _maxAmountController = TextEditingController();
@@ -49,8 +52,17 @@ class HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    final n = DateTime.now();
+    _selectedMonthFirst = DateTime(n.year, n.month, 1);
+    _filterDay = _clampDay(n.year, n.month, n.day);
     unawaited(_loadFilterOptions());
     unawaited(_loadAll());
+  }
+
+  /// Past five months ending at the current calendar month.
+  static List<DateTime> _fiveMonthChoices() {
+    final a = DateTime.now();
+    return List.generate(5, (i) => DateTime(a.year, a.month - i, 1));
   }
 
   @override
@@ -79,9 +91,8 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshBudget() async {
-    final now = DateTime.now();
-    final year = now.year;
-    final month = now.month;
+    final year = _selectedMonthFirst.year;
+    final month = _selectedMonthFirst.month;
     _budget = await _db.getBudgetForMonth(year, month);
     _spent = await _db.sumExpenseRupeesForMonth(year, month);
   }
@@ -94,30 +105,40 @@ class HomeScreenState extends State<HomeScreen> {
 
   ExpenseQuery _buildQuery() {
     final limit = _expandedList ? null : 10;
+    final sy = _selectedMonthFirst.year;
+    final sm = _selectedMonthFirst.month;
 
     switch (_filterMode) {
       case _FilterMode.recent:
-        return ExpenseQuery(limit: limit);
+        return ExpenseQuery(
+          scopeYear: sy,
+          scopeMonth: sm,
+          limit: limit,
+        );
       case _FilterMode.date:
         return ExpenseQuery(
-          filterYear: _filterYear,
-          filterMonth: _filterMonth,
+          scopeYear: sy,
+          scopeMonth: sm,
           filterDay: _filterDay,
           limit: limit,
         );
       case _FilterMode.category:
         if (_filterCategoryId == null) {
-          return const ExpenseQuery(limit: 0);
+          return ExpenseQuery(scopeYear: sy, scopeMonth: sm, limit: 0);
         }
         return ExpenseQuery(
+          scopeYear: sy,
+          scopeMonth: sm,
           categoryId: _filterCategoryId,
           limit: limit,
         );
       case _FilterMode.place:
         if (_filterPlaceId == null) {
-          return const ExpenseQuery(limit: 0);
+          return ExpenseQuery(scopeYear: sy, scopeMonth: sm, limit: 0);
         }
         return ExpenseQuery(
+          scopeYear: sy,
+          scopeMonth: sm,
           placeId: _filterPlaceId,
           limit: limit,
         );
@@ -125,13 +146,25 @@ class HomeScreenState extends State<HomeScreen> {
         final minV = int.tryParse(_minAmountController.text.replaceAll(',', ''));
         final maxV = int.tryParse(_maxAmountController.text.replaceAll(',', ''));
         if (minV == null || maxV == null) {
-          return const ExpenseQuery(limit: 0);
+          return ExpenseQuery(scopeYear: sy, scopeMonth: sm, limit: 0);
         }
         final lo = minV <= maxV ? minV : maxV;
         final hi = minV <= maxV ? maxV : minV;
         return ExpenseQuery(
+          scopeYear: sy,
+          scopeMonth: sm,
           amountMin: lo,
           amountMax: hi,
+          limit: limit,
+        );
+      case _FilterMode.payment:
+        if (_filterPaymentMethod == null) {
+          return ExpenseQuery(scopeYear: sy, scopeMonth: sm, limit: 0);
+        }
+        return ExpenseQuery(
+          scopeYear: sy,
+          scopeMonth: sm,
+          paymentMethodDb: _filterPaymentMethod!.dbValue,
           limit: limit,
         );
     }
@@ -143,12 +176,26 @@ class HomeScreenState extends State<HomeScreen> {
       _expandedList = false;
       if (mode == _FilterMode.date) {
         final now = DateTime.now();
-        _filterYear = now.year;
-        _filterMonth = now.month;
-        _filterDay = _clampDay(now.year, now.month, now.day);
+        final sy = _selectedMonthFirst.year;
+        final sm = _selectedMonthFirst.month;
+        if (sy == now.year && sm == now.month) {
+          _filterDay = _clampDay(sy, sm, now.day);
+        } else {
+          _filterDay = 1;
+        }
       }
     });
     unawaited(_refreshExpenseList());
+  }
+
+  void _onMonthSelected(DateTime firstOfMonth) {
+    final d = DateTime(firstOfMonth.year, firstOfMonth.month, 1);
+    setState(() {
+      _selectedMonthFirst = d;
+      _expandedList = false;
+      _filterDay = _clampDay(d.year, d.month, _filterDay);
+    });
+    unawaited(_loadAll());
   }
 
   int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
@@ -178,9 +225,8 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showBudgetDialog() async {
-    final now = DateTime.now();
-    final year = now.year;
-    final month = now.month;
+    final year = _selectedMonthFirst.year;
+    final month = _selectedMonthFirst.month;
     final amountText = await showDialog<String?>(
       context: context,
       builder: (context) => _MonthlyBudgetDialog(
@@ -273,9 +319,6 @@ class HomeScreenState extends State<HomeScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final now = DateTime.now();
-    final year = now.year;
-    final month = now.month;
     final budgetAmount = _budget?.amountRupees ?? 0;
 
     final showFooter = _expenses.isNotEmpty &&
@@ -290,11 +333,12 @@ class HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             sliver: SliverToBoxAdapter(
               child: MonthSummaryHeader(
-                year: year,
-                monthIndex: month,
+                selectedMonth: _selectedMonthFirst,
+                monthChoices: _fiveMonthChoices(),
                 budgetRupees: budgetAmount,
                 spentRupees: _spent,
                 onSetBudget: _showBudgetDialog,
+                onMonthChanged: _onMonthSelected,
               ),
             ),
           ),
@@ -341,63 +385,39 @@ class HomeScreenState extends State<HomeScreen> {
                         selected: _filterMode == _FilterMode.amount,
                         onTap: () => _onFilterModeChanged(_FilterMode.amount),
                       ),
+                      _FilterChip(
+                        label: 'Payment',
+                        selected: _filterMode == _FilterMode.payment,
+                        onTap: () => _onFilterModeChanged(_FilterMode.payment),
+                      ),
                     ],
                   ),
                   if (_filterMode == _FilterMode.date) ...[
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: DropdownButtonFormField<int>(
-                            value: _filterMonth, // ignore: deprecated_member_use
-                            decoration: const InputDecoration(
-                              labelText: 'Month',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: List.generate(
-                              12,
-                              (i) => DropdownMenuItem(
-                                value: i + 1,
-                                child: Text(monthShortName(i + 1)),
-                              ),
-                            ),
-                            onChanged: (v) {
-                              if (v == null) return;
-                              setState(() {
-                                _filterMonth = v;
-                                _filterDay = _clampDay(_filterYear, v, _filterDay);
-                                _expandedList = false;
-                              });
-                              unawaited(_refreshExpenseList());
-                            },
-                          ),
+                    DropdownButtonFormField<int>(
+                      value: _filterDay, // ignore: deprecated_member_use
+                      decoration: const InputDecoration(
+                        labelText: 'Day',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: List.generate(
+                        _daysInMonth(
+                          _selectedMonthFirst.year,
+                          _selectedMonthFirst.month,
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButtonFormField<int>(
-                            value: _filterDay, // ignore: deprecated_member_use
-                            decoration: const InputDecoration(
-                              labelText: 'Day',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: List.generate(
-                              _daysInMonth(_filterYear, _filterMonth),
-                              (i) => DropdownMenuItem(
-                                value: i + 1,
-                                child: Text('${i + 1}'),
-                              ),
-                            ),
-                            onChanged: (v) {
-                              if (v == null) return;
-                              setState(() {
-                                _filterDay = v;
-                                _expandedList = false;
-                              });
-                              unawaited(_refreshExpenseList());
-                            },
-                          ),
+                        (i) => DropdownMenuItem(
+                          value: i + 1,
+                          child: Text('${i + 1}'),
                         ),
-                      ],
+                      ),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() {
+                          _filterDay = v;
+                          _expandedList = false;
+                        });
+                        unawaited(_refreshExpenseList());
+                      },
                     ),
                   ],
                   if (_filterMode == _FilterMode.category) ...[
@@ -488,6 +508,33 @@ class HomeScreenState extends State<HomeScreen> {
                         onPressed: _applyAmountFilter,
                         child: const Text('Apply range'),
                       ),
+                    ),
+                  ],
+                  if (_filterMode == _FilterMode.payment) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<PaymentMethod>(
+                      value: _filterPaymentMethod, // ignore: deprecated_member_use
+                      hint: const Text('Select payment method'),
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Payment method',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: PaymentMethod.values
+                          .map(
+                            (m) => DropdownMenuItem(
+                              value: m,
+                              child: Text(m.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) {
+                        setState(() {
+                          _filterPaymentMethod = v;
+                          _expandedList = false;
+                        });
+                        unawaited(_refreshExpenseList());
+                      },
                     ),
                   ],
                 ],
@@ -637,9 +684,9 @@ class HomeScreenState extends State<HomeScreen> {
   String _filterSubtitle() {
     switch (_filterMode) {
       case _FilterMode.recent:
-        return _expandedList ? 'Showing all (by date)' : 'Latest 10';
+        return _expandedList ? 'Showing all in month' : 'Latest 10 in month';
       case _FilterMode.date:
-        return '$_filterYear-$_filterMonth-$_filterDay';
+        return 'Day $_filterDay';
       case _FilterMode.category:
         if (_filterCategoryId == null) return 'Pick a category';
         for (final c in _filterCategories) {
@@ -654,6 +701,9 @@ class HomeScreenState extends State<HomeScreen> {
         return '';
       case _FilterMode.amount:
         return 'Amount range';
+      case _FilterMode.payment:
+        if (_filterPaymentMethod == null) return 'Pick a method';
+        return _filterPaymentMethod!.label;
     }
   }
 }

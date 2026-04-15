@@ -5,15 +5,17 @@ import 'package:kharcha_pani/ui/widgets/month_summary_header.dart';
 
 void main() {
   testWidgets('Month summary shows money remaining', (WidgetTester tester) async {
+    final selected = DateTime(2026, 4, 1);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: MonthSummaryHeader(
-            year: 2026,
-            monthIndex: 4,
+            selectedMonth: selected,
+            monthChoices: [selected],
             budgetRupees: 10000,
             spentRupees: 3000,
             onSetBudget: () {},
+            onMonthChanged: (_) {},
           ),
         ),
       ),

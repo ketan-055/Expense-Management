@@ -9,6 +9,7 @@ import '../models/expense.dart';
 import '../models/expense_query.dart';
 import '../models/payment_method.dart';
 import '../models/place.dart';
+import '../models/udhaar_entry.dart';
 
 /// SQLite singleton: schema, initialization, and CRUD for categories, places, budget, and expenses.
 class DatabaseHelper {
@@ -51,6 +52,9 @@ class DatabaseHelper {
     }
     if (oldVersion < 3) {
       await _migrateToV3(db);
+    }
+    if (oldVersion < 4) {
+      await _createUdhaarTables(db);
     }
   }
 
@@ -101,6 +105,26 @@ CREATE TABLE IF NOT EXISTS places (
     // For onCreate at v3, legacy tables may already exist from _createTablesLegacy without places.
     // Insert default place if missing, then ensure expenses has place_id.
     await _ensurePlacesAndExpensePlaceColumn(db);
+    await _createUdhaarTables(db);
+  }
+
+  Future<void> _createUdhaarTables(Database db) async {
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS udhaar_to_others (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  amount_rupees INTEGER NOT NULL,
+  entry_at INTEGER NOT NULL
+);
+''');
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS udhaar_from_me (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  amount_rupees INTEGER NOT NULL,
+  entry_at INTEGER NOT NULL
+);
+''');
   }
 
   Future<void> _migrateToV3(Database db) async {
@@ -286,7 +310,7 @@ WHERE expense_at >= ? AND expense_at < ?
     );
   }
 
-  /// Filtered list; [limit] null = no limit. [limit] 0 returns empty.
+  /// Filtered list within [scopeYear]/[scopeMonth]. [limit] null = no limit. [limit] 0 returns empty.
   Future<List<ExpenseItem>> queryExpenses(ExpenseQuery q) async {
     if (q.limit != null && q.limit! <= 0) {
       return [];
@@ -295,15 +319,23 @@ WHERE expense_at >= ? AND expense_at < ?
     final where = <String>['1 = 1'];
     final args = <Object?>[];
 
-    if (q.hasDateFilter) {
-      final start = DateTime(
-        q.filterYear!,
-        q.filterMonth!,
-        q.filterDay!,
-      );
+    final lastDayInMonth = DateTime(q.scopeYear, q.scopeMonth + 1, 0).day;
+    if (q.filterDay != null) {
+      final day = q.filterDay!.clamp(1, lastDayInMonth);
+      final start = DateTime(q.scopeYear, q.scopeMonth, day);
       final end = start.add(const Duration(days: 1));
       where.add('e.expense_at >= ? AND e.expense_at < ?');
       args.addAll([start.millisecondsSinceEpoch, end.millisecondsSinceEpoch]);
+    } else {
+      final monthStart = DateTime(q.scopeYear, q.scopeMonth, 1);
+      final monthEnd = q.scopeMonth == 12
+          ? DateTime(q.scopeYear + 1, 1, 1)
+          : DateTime(q.scopeYear, q.scopeMonth + 1, 1);
+      where.add('e.expense_at >= ? AND e.expense_at < ?');
+      args.addAll([
+        monthStart.millisecondsSinceEpoch,
+        monthEnd.millisecondsSinceEpoch,
+      ]);
     }
     if (q.categoryId != null) {
       where.add('e.category_id = ?');
@@ -312,6 +344,10 @@ WHERE expense_at >= ? AND expense_at < ?
     if (q.placeId != null) {
       where.add('e.place_id = ?');
       args.add(q.placeId);
+    }
+    if (q.paymentMethodDb != null) {
+      where.add('e.payment_method = ?');
+      args.add(q.paymentMethodDb);
     }
     if (q.hasAmountFilter) {
       where.add('e.amount_rupees >= ? AND e.amount_rupees <= ?');
@@ -377,6 +413,74 @@ ORDER BY e.expense_at DESC, e.id DESC
       [startMs, endMs],
     );
     return rows.map(_rowToExpenseItem).toList();
+  }
+
+  // --- Udhaar (borrowed / lent) ---
+
+  Future<int> insertUdhaarToOthers({
+    required String name,
+    required int amountRupees,
+    required DateTime entryAt,
+  }) async {
+    final db = await database;
+    return db.insert('udhaar_to_others', {
+      'name': name.trim(),
+      'amount_rupees': amountRupees,
+      'entry_at': entryAt.millisecondsSinceEpoch,
+    });
+  }
+
+  Future<int> insertUdhaarFromMe({
+    required String name,
+    required int amountRupees,
+    required DateTime entryAt,
+  }) async {
+    final db = await database;
+    return db.insert('udhaar_from_me', {
+      'name': name.trim(),
+      'amount_rupees': amountRupees,
+      'entry_at': entryAt.millisecondsSinceEpoch,
+    });
+  }
+
+  Future<List<UdhaarEntry>> getUdhaarToOthers({required bool nameAscending}) async {
+    final db = await database;
+    final rows = await db.query(
+      'udhaar_to_others',
+      orderBy: 'name COLLATE NOCASE ${nameAscending ? 'ASC' : 'DESC'}',
+    );
+    return rows.map(UdhaarEntry.fromMap).toList();
+  }
+
+  Future<List<UdhaarEntry>> getUdhaarFromMe({required bool nameAscending}) async {
+    final db = await database;
+    final rows = await db.query(
+      'udhaar_from_me',
+      orderBy: 'name COLLATE NOCASE ${nameAscending ? 'ASC' : 'DESC'}',
+    );
+    return rows.map(UdhaarEntry.fromMap).toList();
+  }
+
+  Future<int> sumUdhaarToOthers() async {
+    final db = await database;
+    final r = await db.rawQuery(
+      'SELECT IFNULL(SUM(amount_rupees), 0) AS s FROM udhaar_to_others',
+    );
+    final raw = r.first['s'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return 0;
+  }
+
+  Future<int> sumUdhaarFromMe() async {
+    final db = await database;
+    final r = await db.rawQuery(
+      'SELECT IFNULL(SUM(amount_rupees), 0) AS s FROM udhaar_from_me',
+    );
+    final raw = r.first['s'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return 0;
   }
 
   Future<void> close() async {

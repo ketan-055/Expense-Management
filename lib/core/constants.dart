@@ -4,5 +4,5 @@ class AppConstants {
 
   static const String appName = 'Kharcha Pani';
   static const String databaseName = 'kharcha_pani.db';
-  static const int databaseVersion = 3;
+  static const int databaseVersion = 4;
 }
