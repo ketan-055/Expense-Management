@@ -33,7 +33,28 @@ class DatabaseHelper {
       version: AppConstants.databaseVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: _onDatabaseOpen,
     );
+  }
+
+  /// Foreign keys + optional [VACUUM] when the file has lots of empty pages (after deletes).
+  Future<void> _onDatabaseOpen(Database db) async {
+    await db.execute('PRAGMA foreign_keys = ON');
+    await _maybeVacuum(db);
+  }
+
+  /// Reclaims space if the freelist is large (SQLite keeps deleted row space until vacuumed).
+  Future<void> _maybeVacuum(Database db) async {
+    try {
+      final pages = Sqflite.firstIntValue(await db.rawQuery('PRAGMA page_count')) ?? 0;
+      if (pages <= 0) return;
+      final free = Sqflite.firstIntValue(await db.rawQuery('PRAGMA freelist_count')) ?? 0;
+      if (free > 50 || free > pages * 0.2) {
+        await db.execute('VACUUM');
+      }
+    } catch (_) {
+      // Ignore: VACUUM can fail if another connection holds the DB; rare on mobile.
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
