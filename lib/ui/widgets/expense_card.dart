@@ -9,6 +9,7 @@ class ExpenseCard extends StatelessWidget {
     required this.title,
     required this.amountRupees,
     required this.categoryName,
+    required this.placeName,
     required this.paymentMethod,
     required this.dateTime,
   });
@@ -16,6 +17,7 @@ class ExpenseCard extends StatelessWidget {
   final String title;
   final int amountRupees;
   final String categoryName;
+  final String placeName;
   final PaymentMethod paymentMethod;
   final DateTime dateTime;
 
@@ -66,14 +68,28 @@ class ExpenseCard extends StatelessWidget {
                   label: categoryName,
                 ),
                 _Chip(
+                  icon: Icons.place_outlined,
+                  label: placeName,
+                ),
+                _Chip(
                   icon: paymentMethod == PaymentMethod.cash
                       ? Icons.payments_outlined
                       : Icons.account_balance_wallet_outlined,
                   label: paymentMethod.label,
                 ),
-                _Chip(
-                  icon: Icons.schedule_outlined,
-                  label: formatExpenseDateTime(dateTime),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Spacer(),
+                Text(
+                  formatExpenseDateTime(dateTime),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.55),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),

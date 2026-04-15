@@ -10,48 +10,51 @@ import '../../data/models/place.dart';
 import '../../utils/formatters.dart';
 import '../widgets/name_input_dialog.dart';
 
-class AddExpenseScreen extends StatefulWidget {
-  const AddExpenseScreen({super.key});
+class EditExpenseScreen extends StatefulWidget {
+  const EditExpenseScreen({super.key, required this.expense});
+
+  final ExpenseItem expense;
 
   @override
-  State<AddExpenseScreen> createState() => _AddExpenseScreenState();
+  State<EditExpenseScreen> createState() => _EditExpenseScreenState();
 }
 
-class _AddExpenseScreenState extends State<AddExpenseScreen> {
+class _EditExpenseScreenState extends State<EditExpenseScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _descController = TextEditingController();
-  final _amountController = TextEditingController();
+  late final TextEditingController _titleController;
+  late final TextEditingController _descController;
+  late final TextEditingController _amountController;
 
   final DatabaseHelper _db = DatabaseHelper.instance;
 
-  PaymentMethod _payment = PaymentMethod.cash;
+  late PaymentMethod _payment;
   List<Category> _categories = [];
   List<Place> _places = [];
   int? _categoryId;
   int? _placeId;
-  DateTime _expenseAt = DateTime.now();
+  late DateTime _expenseAt;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_loadDropdowns());
+    final e = widget.expense;
+    _titleController = TextEditingController(text: e.title);
+    _descController = TextEditingController(text: e.description ?? '');
+    _amountController = TextEditingController(text: '${e.amountRupees}');
+    _payment = e.paymentMethod;
+    _categoryId = e.categoryId;
+    _placeId = e.placeId;
+    _expenseAt = e.expenseAt;
+    unawaited(_loadLists());
   }
 
-  Future<void> _loadDropdowns() async {
+  Future<void> _loadLists() async {
     final cats = await _db.getAllCategories();
     final pls = await _db.getAllPlaces();
     if (!mounted) return;
     setState(() {
       _categories = cats;
       _places = pls;
-      if (_categoryId != null &&
-          !_categories.any((c) => c.id == _categoryId)) {
-        _categoryId = null;
-      }
-      if (_placeId != null && !_places.any((p) => p.id == _placeId)) {
-        _placeId = null;
-      }
     });
   }
 
@@ -98,7 +101,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     if (name == null || name.isEmpty || !mounted) return;
     try {
       final id = await _db.insertCategory(name);
-      await _loadDropdowns();
+      await _loadLists();
       setState(() => _categoryId = id);
     } catch (_) {
       if (!mounted) return;
@@ -121,7 +124,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     if (name == null || name.isEmpty || !mounted) return;
     try {
       final id = await _db.insertPlace(name);
-      await _loadDropdowns();
+      await _loadLists();
       setState(() => _placeId = id);
     } catch (_) {
       if (!mounted) return;
@@ -135,15 +138,11 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    if (_categoryId == null) {
+    if (_categoryId == null || _placeId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select or add a category.')),
-      );
-      return;
-    }
-    if (_placeId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select or add a place.')),
+        const SnackBar(
+          content: Text('Select both category and place.'),
+        ),
       );
       return;
     }
@@ -155,10 +154,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       );
       return;
     }
-    final title = _titleController.text.trim();
     final draft = ExpenseDraft(
       amountRupees: amount,
-      title: title,
+      title: _titleController.text.trim(),
       description: _descController.text.trim().isEmpty
           ? null
           : _descController.text.trim(),
@@ -167,7 +165,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       placeId: _placeId!,
       expenseAt: _expenseAt,
     );
-    await _db.insertExpense(draft);
+    await _db.updateExpense(widget.expense.id, draft);
     if (!mounted) return;
     Navigator.of(context).pop(true);
   }
@@ -176,7 +174,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add expense'),
+        title: const Text('Edit expense'),
       ),
       body: Form(
         key: _formKey,
@@ -311,7 +309,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               onPressed: _save,
               child: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 14),
-                child: Text('Save expense'),
+                child: Text('Save changes'),
               ),
             ),
           ],
