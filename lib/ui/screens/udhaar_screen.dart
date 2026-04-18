@@ -96,6 +96,95 @@ class UdhaarScreenState extends State<UdhaarScreen>
     }
   }
 
+  Future<bool?> _confirmDelete(UdhaarEntry entry) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete entry?'),
+        content: Text('Remove "${entry.name}" permanently?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB91C1C),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool?> _confirmEdit() {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit entry?'),
+        content: const Text('Open the editor for this udhaar entry?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Edit'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteEntry(UdhaarEntry entry, {required bool toOthers}) async {
+    final ok = await _confirmDelete(entry);
+    if (ok != true) return;
+    if (toOthers) {
+      await _db.deleteUdhaarToOthers(entry.id);
+    } else {
+      await _db.deleteUdhaarFromMe(entry.id);
+    }
+    await _loadAll();
+  }
+
+  Future<void> _editEntry(UdhaarEntry entry, {required bool toOthers}) async {
+    final edit = await _confirmEdit();
+    if (edit != true) return;
+    if (!mounted) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => _UdhaarEditDialog(
+        title: toOthers ? 'Edit — To Others' : 'Edit — From Me',
+        initialName: entry.name,
+        initialAmountRupees: entry.amountRupees,
+        initialEntryAt: entry.entryAt,
+        onSave: (name, amount, dateTime) async {
+          if (toOthers) {
+            await _db.updateUdhaarToOthers(
+              id: entry.id,
+              name: name,
+              amountRupees: amount,
+              entryAt: dateTime,
+            );
+          } else {
+            await _db.updateUdhaarFromMe(
+              id: entry.id,
+              name: name,
+              amountRupees: amount,
+              entryAt: dateTime,
+            );
+          }
+        },
+      ),
+    );
+    if (saved == true && mounted) {
+      await _loadAll();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     const purple = Color(0xFF7C3AED);
@@ -142,6 +231,8 @@ class UdhaarScreenState extends State<UdhaarScreen>
                 onNameFilterChanged: (name) {
                   setState(() => _filterNameToOthers = name);
                 },
+                onDelete: (e) => _deleteEntry(e, toOthers: true),
+                onEdit: (e) => _editEntry(e, toOthers: true),
                 emptyMessage: 'No entries yet.\nTap + to add.',
               ),
               _UdhaarTabContent(
@@ -154,6 +245,8 @@ class UdhaarScreenState extends State<UdhaarScreen>
                 onNameFilterChanged: (name) {
                   setState(() => _filterNameFromMe = name);
                 },
+                onDelete: (e) => _deleteEntry(e, toOthers: false),
+                onEdit: (e) => _editEntry(e, toOthers: false),
                 emptyMessage: 'No entries yet.\nTap + to add.',
               ),
             ],
@@ -173,6 +266,8 @@ class _UdhaarTabContent extends StatelessWidget {
     required this.allEntries,
     required this.selectedName,
     required this.onNameFilterChanged,
+    required this.onDelete,
+    required this.onEdit,
     required this.emptyMessage,
   });
 
@@ -185,6 +280,8 @@ class _UdhaarTabContent extends StatelessWidget {
   final List<UdhaarEntry> allEntries;
   final String? selectedName;
   final ValueChanged<String?> onNameFilterChanged;
+  final Future<void> Function(UdhaarEntry entry) onDelete;
+  final Future<void> Function(UdhaarEntry entry) onEdit;
   final String emptyMessage;
 
   List<String> _uniqueNamesSorted() {
@@ -317,49 +414,85 @@ class _UdhaarTabContent extends StatelessWidget {
           ...entries.map(
             (e) => Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: Card(
-                color: const Color(0xFF121212),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: const BorderSide(color: Color(0xFF252525)),
+              child: Dismissible(
+                key: ValueKey<int>(e.id),
+                direction: DismissDirection.horizontal,
+                confirmDismiss: (direction) async {
+                  if (direction == DismissDirection.startToEnd) {
+                    await onDelete(e);
+                    return false;
+                  }
+                  await onEdit(e);
+                  return false;
+                },
+                background: Container(
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.only(left: 20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF7F1D1D),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.white,
+                  ),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              e.name,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                secondaryBackground: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E3A5F),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.edit_outlined,
+                    color: Colors.white,
+                  ),
+                ),
+                child: Card(
+                  color: const Color(0xFF121212),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: Color(0xFF252525)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                e.name,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              formatExpenseDateTime(e.entryAt),
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.45),
-                                fontSize: 12,
+                              const SizedBox(height: 4),
+                              Text(
+                                formatExpenseDateTime(e.entryAt),
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.45),
+                                  fontSize: 12,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                      Text(
-                        formatRupees(e.amountRupees),
-                        style: const TextStyle(
-                          color: Color(0xFFE4E4E9),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                        Text(
+                          formatRupees(e.amountRupees),
+                          style: const TextStyle(
+                            color: Color(0xFFE4E4E9),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -381,6 +514,112 @@ class _UdhaarAddDialog extends StatefulWidget {
 
   @override
   State<_UdhaarAddDialog> createState() => _UdhaarAddDialogState();
+}
+
+class _UdhaarEditDialog extends StatefulWidget {
+  const _UdhaarEditDialog({
+    required this.title,
+    required this.initialName,
+    required this.initialAmountRupees,
+    required this.initialEntryAt,
+    required this.onSave,
+  });
+
+  final String title;
+  final String initialName;
+  final int initialAmountRupees;
+  final DateTime initialEntryAt;
+  final Future<void> Function(String name, int amountRupees, DateTime entryAt) onSave;
+
+  @override
+  State<_UdhaarEditDialog> createState() => _UdhaarEditDialogState();
+}
+
+class _UdhaarEditDialogState extends State<_UdhaarEditDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _amountController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.initialName);
+    _amountController =
+        TextEditingController(text: '${widget.initialAmountRupees}');
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _nameController.text.trim();
+    final raw = _amountController.text.trim().replaceAll(',', '');
+    final amount = int.tryParse(raw);
+    if (name.isEmpty || amount == null || amount <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter a valid name and positive amount.'),
+        ),
+      );
+      return;
+    }
+    await widget.onSave(name, amount, widget.initialEntryAt);
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _nameController,
+            decoration: const InputDecoration(
+              labelText: 'Name',
+              border: OutlineInputBorder(),
+            ),
+            textCapitalization: TextCapitalization.words,
+            autofocus: true,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _amountController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Amount (₹)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Date: ${formatExpenseDateTime(widget.initialEntryAt)}',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.45),
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
 }
 
 class _UdhaarAddDialogState extends State<_UdhaarAddDialog> {

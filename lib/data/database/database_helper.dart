@@ -528,6 +528,54 @@ ORDER BY e.expense_at DESC, e.id DESC
     });
   }
 
+  Future<void> updateUdhaarToOthers({
+    required int id,
+    required String name,
+    required int amountRupees,
+    required DateTime entryAt,
+  }) async {
+    final db = await database;
+    await db.update(
+      'udhaar_to_others',
+      {
+        'name': name.trim(),
+        'amount_rupees': amountRupees,
+        'entry_at': entryAt.millisecondsSinceEpoch,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateUdhaarFromMe({
+    required int id,
+    required String name,
+    required int amountRupees,
+    required DateTime entryAt,
+  }) async {
+    final db = await database;
+    await db.update(
+      'udhaar_from_me',
+      {
+        'name': name.trim(),
+        'amount_rupees': amountRupees,
+        'entry_at': entryAt.millisecondsSinceEpoch,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> deleteUdhaarToOthers(int id) async {
+    final db = await database;
+    await db.delete('udhaar_to_others', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteUdhaarFromMe(int id) async {
+    final db = await database;
+    await db.delete('udhaar_from_me', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<List<UdhaarEntry>> getUdhaarToOthers({required bool nameAscending}) async {
     final db = await database;
     final rows = await db.query(
